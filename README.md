@@ -22,11 +22,9 @@ A question goes through a guardrail, a knowledge-base lookup, an answer generate
 
 ## CI/CD
 
-| Workflow | Trigger | What it does |
-|---|---|---|
-| [`app.yml`](.github/workflows/app.yml) | change in `mini-agent/` | test, build, Trivy scan, push to ACR, deploy new revision with **25%** traffic |
-| [`infra.yml`](.github/workflows/infra.yml) | change in `infra/` | `plan` on PRs, `apply` after approval on merge |
+![CI/CD flow](docs/cicd-flow.svg)
 
+Two pipelines, each triggered only by changes to its own folder: [`app.yml`](.github/workflows/app.yml) ships the app, [`infra.yml`](.github/workflows/infra.yml) manages the Azure resources.
 
 **Release flow:** merge to `main` → canary gets 25% of traffic → QA tests → a human sets the new revision to 100% in the Azure portal (and deactivates the old one).
 
@@ -36,7 +34,7 @@ A question goes through a guardrail, a knowledge-base lookup, an answer generate
 mini-agent/        FastAPI app, Dockerfile, tests
 infra/             Terraform (registry, Key Vault, Container Apps, RBAC)
 docs/              diagrams
-.github/workflows/ app, infra, infra-destroy pipelines
+.github/workflows/ app and infra pipelines
 ```
 
 ## Getting started
