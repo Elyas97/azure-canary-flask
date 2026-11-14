@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Insurance assistant</title>
+<style>
+  :root { --bg:#f7f8fa; --card:#fff; --text:#1c2430; --muted:#667085; --line:#d9dee7; --accent:#1f5eff; --user:#e8efff; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#12161d; --card:#1a2029; --text:#e7ebf2; --muted:#98a2b3; --line:#2b3340; --accent:#6c94ff; --user:#22304f; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:16px/1.5 system-ui, sans-serif; }
+  main { max-width: 640px; margin: 0 auto; padding: 24px 16px; display:flex; flex-direction:column; min-height:100vh; }
+  h1 { font-size: 1.25rem; margin: 0 0 4px; }
+  p.hint { margin: 0 0 16px; color: var(--muted); font-size: .9rem; }
+  #log { flex:1; display:flex; flex-direction:column; gap:10px; padding-bottom:16px; }
+  .msg { padding:10px 14px; border-radius:12px; max-width:85%; background:var(--card); border:1px solid var(--line); }
+  .msg.user { align-self:flex-end; background:var(--user); border-color:transparent; }
+  .tag { display:block; margin-top:6px; font-size:.78rem; color:var(--muted); }
+  form { display:flex; gap:8px; position:sticky; bottom:0; padding:12px 0; background:var(--bg); }
+  input { flex:1; padding:12px; border:1px solid var(--line); border-radius:10px; background:var(--card); color:var(--text); font:inherit; }
+  button { padding:12px 18px; border:0; border-radius:10px; background:var(--accent); color:#fff; font:inherit; cursor:pointer; }
+  button:disabled { opacity:.6; cursor:wait; }
+  input:focus-visible, button:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Insurance assistant</h1>
+  <p class="hint">Try: "How fast are refunds paid?", "What is my home deductible?", or something it should not answer.</p>
+  <div id="log" aria-live="polite"></div>
+  <form id="form">
+    <input id="q" placeholder="Ask a question" autocomplete="off" required maxlength="500" aria-label="Your question">
+    <button id="send">Ask</button>
+  </form>
+</main>
+<script>
+  const log = document.getElementById("log"), form = document.getElementById("form"),
+        input = document.getElementById("q"), send = document.getElementById("send");
+  let threadId = null;
+
+  function add(text, cls, tag) {
+    const d = document.createElement("div");
+    d.className = "msg " + cls;
+    d.textContent = text;
+    if (tag) { const t = document.createElement("span"); t.className = "tag"; t.textContent = tag; d.appendChild(t); }
+    log.appendChild(d);
+    d.scrollIntoView({ block: "end" });
+  }
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const question = input.value.trim();
+    if (!question) return;
+    add(question, "user");
+    input.value = ""; send.disabled = true;
+    try {
+      const res = await fetch("/api/ask", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question, thread_id: threadId }),
+      });
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      const data = await res.json();
+      threadId = data.thread_id;
+      add(data.answer, "bot", "outcome: " + data.outcome);
+    } catch (err) {
+      add("Request failed. Check that the server is running.", "bot", "error");
+    } finally { send.disabled = false; input.focus(); }
+  });
+</script>
+</body>
+</html>
