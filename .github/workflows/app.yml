@@ -1,0 +1,96 @@
+name: app
+
+# Run only when the app code (or this file) changes
+on:
+  push:
+    branches: [main]
+    paths: ["mini-agent/**", ".github/workflows/app.yml"]
+  pull_request:
+    paths: ["mini-agent/**", ".github/workflows/app.yml"]
+
+# Lets the jobs log in to Azure with a short-lived token (no stored passwords)
+permissions:
+  id-token: write
+  contents: read
+
+# Names come from GitHub repo Variables (Settings > Secrets and variables > Actions)
+env:
+  ACR_NAME: ${{ vars.ACR_NAME }}
+  RESOURCE_GROUP: ${{ vars.RESOURCE_GROUP }}
+  CONTAINER_APP: ${{ vars.CONTAINER_APP }}
+  IMAGE: ${{ vars.ACR_NAME }}.azurecr.io/${{ vars.IMAGE_NAME }}:${{ github.sha }}
+
+jobs:
+  # STEP 1: make sure the code works. Runs on PRs too.
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mini-agent
+    steps:
+      - uses: actions/checkout@v4              # download the repo
+      - uses: actions/setup-python@v5          # same Python as the Dockerfile
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      # "-m not eval" skips the tests that call the real OpenAI API
+      - run: python -m pytest -m "not eval" -q
+        env:
+          OPENAI_API_KEY: dummy                # tests mock the LLM, any value works
+
+  # STEP 2: build the image, scan it, push it to ACR. Main branch only.
+  build:
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t $IMAGE mini-agent
+
+      
+      # Trivy = a free security scanner. It looks inside the image (OS packages and
+      # Python libraries) for known vulnerabilities (CVEs). The job fails if it
+      # finds serious ones that already have a fix, so a vulnerable image never
+      # reaches the registry.
+   #   - uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8
+   #     with:
+   #       image-ref: ${{ env.IMAGE }}
+   #       severity: CRITICAL,HIGH
+   #       ignore-unfixed: true
+   #       exit-code: "1"
+
+      - uses: azure/login@v2                   # log in to Azure (OIDC)
+        with:
+          client-id: ${{ secrets.APP_AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - run: az acr login --name $ACR_NAME     # authenticate docker to your registry
+      - run: docker push $IMAGE
+
+  # STEP 3: canary. Deploy the new version but send it only 25% of traffic.
+  # The pipeline stops here on purpose. QA tests the canary, then a human sets
+  # 100% manually in the Azure portal (Container App > Revisions and replicas).
+  canary:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.APP_AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Create new revision with 25% traffic
+        run: |
+          # The revision with the most traffic right now (the stable one)
+          OLD=$(az containerapp revision list -n $CONTAINER_APP -g $RESOURCE_GROUP \
+            --query "sort_by(@, &properties.trafficWeight)[-1].name" -o tsv)
+          NEW="$CONTAINER_APP--g${GITHUB_SHA::7}"
+
+          # Creates a new revision running the new image (gets 0% traffic at first)
+          az containerapp update -n $CONTAINER_APP -g $RESOURCE_GROUP \
+            --image $IMAGE --revision-suffix g${GITHUB_SHA::7}
+
+          # Split traffic: 75% old, 25% new
+          az containerapp ingress traffic set -n $CONTAINER_APP -g $RESOURCE_GROUP \
+            --revision-weight $OLD=75 $NEW=25
