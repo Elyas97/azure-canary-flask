@@ -158,6 +158,11 @@ resource "azurerm_container_app" "app" {
         name        = "OPENAI_API_KEY"
         secret_name = "openai-api-key"
       }
+
+      env {
+        name  = "OPENAI_MODEL"
+        value = var.OPENAI_MODEL
+      }
     }
   }
 

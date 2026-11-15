@@ -28,3 +28,8 @@ variable "key_vault_purge_protection" {
   type    = bool
   default = false # set true in prod; blocks purging, so a destroyed vault's name stays reserved
 }
+
+variable "OPENAI_MODEL" {
+  type    = string
+  default = "gpt-4o-mini"
+}
